@@ -346,6 +346,76 @@ def search_activities():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/admin/seed', methods=['POST'])
+def seed_database():
+    """Admin endpoint to seed the database with sample destinations."""
+    try:
+        import requests, re, math
+        from collections import Counter
+        
+        def preprocess_text(text):
+            text = text.lower()
+            text = re.sub(r'[^a-z0-9\s]', ' ', text)
+            words = text.split()
+            stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'is', 'was', 'are', 'were', 'be', 'been', 'being'}
+            return [w for w in words if w not in stop_words and len(w) > 2]
+        
+        def simple_embedding(text, dimension=768):
+            words = preprocess_text(text)
+            if not words: return [0.0] * dimension
+            word_counts = Counter(words)
+            total_words = len(words)
+            embedding = [0.0] * dimension
+            for word, count in word_counts.items():
+                tf = count / total_words
+                idf = math.log(1 + total_words / count)
+                weight = tf * idf
+                for i in range(3):
+                    hash_val = hash(word + str(i))
+                    embedding[abs(hash_val) % dimension] += weight
+            norm = math.sqrt(sum(x**2 for x in embedding))
+            return [x / norm for x in embedding] if norm > 0 else embedding
+        
+        destinations_to_add = ["San Francisco", "Golden Gate Park", "Exploratorium San Francisco"]
+        added = []
+        
+        for dest_name in destinations_to_add:
+            geo_resp = requests.get("https://geocoding-api.open-meteo.com/v1/search", params={"name": dest_name, "count": 1}, timeout=10)
+            geo_data = geo_resp.json()
+            if not geo_data.get("results"): continue
+            geo = geo_data["results"][0]
+            
+            wiki_resp = requests.get("https://en.wikipedia.org/w/api.php", params={
+                "action": "query", "format": "json", "titles": dest_name,
+                "prop": "extracts|pageprops", "exintro": True, "explaintext": True, "redirects": 1
+            }, headers={"User-Agent": "FamilyAdventurePlanner/1.0"}, timeout=10)
+            wiki_data = wiki_resp.json()
+            pages = wiki_data.get("query", {}).get("pages", {})
+            page_id = list(pages.keys())[0]
+            if page_id == "-1": continue
+            page = pages[page_id]
+            
+            extract = page.get('extract', '')[:500]
+            text = f"{page.get('pageprops', {}).get('wikibase-shortdesc', '')}. {extract}"
+            embedding = simple_embedding(text)
+            
+            with get_db_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """INSERT INTO destinations (name, latitude, longitude, description, description_embedding, country, created_at)
+                        VALUES (%s, %s, %s, %s, %s::vector, %s, NOW())
+                        ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description, description_embedding = EXCLUDED.description_embedding
+                        RETURNING destination_id""",
+                        (page.get('title', dest_name), geo['latitude'], geo['longitude'], extract, embedding, geo.get('country', 'Unknown'))
+                    )
+                    added.append({"id": cur.fetchone()[0], "name": page.get('title', dest_name)})
+                    conn.commit()
+        
+        return jsonify({"status": "success", "added": len(added), "destinations": added})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # ============================================================================
 # Run Server
 # ============================================================================
