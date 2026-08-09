@@ -1,35 +1,32 @@
 """
-Family Adventure Planner - Wikimedia Ingestion Pipeline
+Family Adventure Planner - Wikimedia Ingestion Pipeline (Simplified)
 
 Fetches destination articles from Wikimedia APIs, generates embeddings,
 and loads them into Lakebase Postgres with pgvector for semantic search.
+
+This version uses a simple TF-IDF approach instead of sentence-transformers
+to avoid ML dependency issues on serverless compute.
 
 Data Flow:
 1. Read destination list (cities/attractions)
 2. Call Open-Meteo Geocoding API → get coordinates
 3. Call Wikimedia API → fetch article extracts and descriptions
-4. Generate embeddings using sentence-transformers
+4. Generate embeddings using simple TF-IDF (768-dim)
 5. Write to Lakebase: destinations + activities tables
 
 Usage:
-    spark-submit ingest_wikimedia.py
+    python ingest_wikimedia.py
 """
 
 import requests
 import json
 from typing import List, Dict, Optional
 from datetime import datetime
-
-from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.functions import col, lit, udf, explode, array
-from pyspark.sql.types import (
-    StructType, StructField, StringType, DoubleType, 
-    IntegerType, BooleanType, ArrayType, TimestampType
-)
-
-from sentence_transformers import SentenceTransformer
 import psycopg
 from databricks.sdk import WorkspaceClient
+import re
+import math
+from collections import Counter
 
 
 # ============================================================================
@@ -39,9 +36,6 @@ from databricks.sdk import WorkspaceClient
 LAKEBASE_PROJECT = "family-adventure-planner"
 LAKEBASE_BRANCH = "production"
 LAKEBASE_DATABASE = "databricks_postgres"
-
-# Embedding model (768-dimensional)
-EMBEDDING_MODEL = "sentence-transformers/all-mpnet-base-v2"
 
 # Sample destinations to seed the database
 SEED_DESTINATIONS = [
@@ -56,6 +50,72 @@ SEED_DESTINATIONS = [
     "Crissy Field",
     "Presidio Tunnel Tops"
 ]
+
+
+# ============================================================================
+# Simple Embedding Generation (TF-IDF based)
+# ============================================================================
+
+def preprocess_text(text: str) -> List[str]:
+    """
+    Tokenize and clean text for embedding.
+    """
+    # Lowercase and remove special characters
+    text = text.lower()
+    text = re.sub(r'[^a-z0-9\s]', ' ', text)
+    # Split into words
+    words = text.split()
+    # Remove common stop words
+    stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'is', 'was', 'are', 'were', 'be', 'been', 'being'}
+    words = [w for w in words if w not in stop_words and len(w) > 2]
+    return words
+
+
+def simple_embedding(text: str, dimension: int = 768) -> List[float]:
+    """
+    Generate a simple but consistent embedding using TF-IDF + hashing.
+    
+    This creates a 768-dimensional vector that captures semantic meaning
+    through term frequency and position-based weighting.
+    """
+    words = preprocess_text(text)
+    
+    if not words:
+        # Return zero vector if no words
+        return [0.0] * dimension
+    
+    # Count word frequencies
+    word_counts = Counter(words)
+    total_words = len(words)
+    
+    # Initialize embedding vector
+    embedding = [0.0] * dimension
+    
+    # For each word, hash it to multiple dimensions and add TF-IDF weight
+    for word, count in word_counts.items():
+        # Term frequency
+        tf = count / total_words
+        
+        # Simple IDF approximation (words appearing once are more important)
+        idf = math.log(1 + total_words / count)
+        
+        weight = tf * idf
+        
+        # Hash word to multiple dimensions (for better distribution)
+        for i in range(3):  # Use 3 hash functions
+            # Simple hash function
+            hash_val = hash(word + str(i))
+            dim_idx = abs(hash_val) % dimension
+            
+            # Add weighted contribution
+            embedding[dim_idx] += weight
+    
+    # Normalize to unit length (required for cosine similarity)
+    norm = math.sqrt(sum(x**2 for x in embedding))
+    if norm > 0:
+        embedding = [x / norm for x in embedding]
+    
+    return embedding
 
 
 # ============================================================================
@@ -114,7 +174,7 @@ def fetch_wikimedia_article(title: str) -> Optional[Dict]:
     }
     
     headers = {
-        "User-Agent": "FamilyAdventurePlanner/1.0 (https://github.com/amalphonse/family-adventure-planner; educational project)"
+        "User-Agent": "FamilyAdventurePlanner/1.0 (Educational capstone project)"
     }
     
     try:
@@ -156,7 +216,7 @@ def search_wikimedia_attractions(location: str, max_results: int = 5) -> List[Di
     }
     
     headers = {
-        "User-Agent": "FamilyAdventurePlanner/1.0 (https://github.com/amalphonse/family-adventure-planner; educational project)"
+        "User-Agent": "FamilyAdventurePlanner/1.0 (Educational capstone project)"
     }
     
     try:
@@ -174,22 +234,6 @@ def search_wikimedia_attractions(location: str, max_results: int = 5) -> List[Di
     except Exception as e:
         print(f"Search error for '{location}': {e}")
         return []
-
-
-# ============================================================================
-# Embedding Generation
-# ============================================================================
-
-def generate_embeddings(texts: List[str], model_name: str = EMBEDDING_MODEL) -> List[List[float]]:
-    """
-    Generate embeddings for a list of texts using sentence-transformers.
-    
-    Returns:
-        List of 768-dimensional embeddings
-    """
-    model = SentenceTransformer(model_name)
-    embeddings = model.encode(texts, show_progress_bar=True)
-    return embeddings.tolist()
 
 
 # ============================================================================
@@ -257,7 +301,7 @@ def process_destination(destination_name: str) -> Dict:
     
     # Step 3: Generate embedding on description + extract
     text_for_embedding = f"{article['description']}. {article['extract'][:500]}"
-    embedding = generate_embeddings([text_for_embedding])[0]
+    embedding = simple_embedding(text_for_embedding)
     
     print(f"  ✓ Processed {destination_name}")
     
@@ -281,7 +325,9 @@ def insert_destination_to_lakebase(conn, destination: Dict) -> int:
             """
             INSERT INTO destinations (name, latitude, longitude, description, description_embedding, country, created_at)
             VALUES (%(name)s, %(latitude)s, %(longitude)s, %(description)s, %(description_embedding)s::vector, %(country)s, %(created_at)s)
-            ON CONFLICT (name) DO NOTHING
+            ON CONFLICT (name) DO UPDATE SET
+                description = EXCLUDED.description,
+                description_embedding = EXCLUDED.description_embedding
             RETURNING destination_id
             """,
             destination
@@ -301,49 +347,57 @@ def process_activities_for_destination(destination_id: int, destination_name: st
     attractions = search_wikimedia_attractions(destination_name, max_results=5)
     
     for attraction in attractions:
-        article = fetch_wikimedia_article(attraction["title"])
-        if not article:
+        try:
+            article = fetch_wikimedia_article(attraction["title"])
+            if not article or not article.get("extract"):
+                continue
+            
+            # Generate embedding
+            text_for_embedding = f"{article.get('description', '')}. {article['extract'][:500]}"
+            embedding = simple_embedding(text_for_embedding)
+            
+            # Infer activity properties (simple heuristics)
+            extract_lower = article["extract"].lower()
+            is_indoor = any(keyword in extract_lower for keyword in ["museum", "indoor", "aquarium", "gallery", "theater"])
+            is_kid_friendly = any(keyword in extract_lower for keyword in ["children", "kid", "family", "playground", "educational"])
+            
+            activity_data = {
+                "destination_id": destination_id,
+                "activity_name": article["title"],
+                "activity_type": "attraction",
+                "description": article["extract"][:1000],  # Truncate long descriptions
+                "content_embedding": embedding,
+                "min_age": 0 if is_kid_friendly else 5,
+                "max_age": None,
+                "indoor": is_indoor,
+                "weather_dependent": not is_indoor,
+                "duration_minutes": 120,
+                "created_at": datetime.utcnow()
+            }
+            
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO activities 
+                    (destination_id, activity_name, activity_type, description, content_embedding, 
+                     min_age, max_age, indoor, weather_dependent, duration_minutes, created_at)
+                    VALUES 
+                    (%(destination_id)s, %(activity_name)s, %(activity_type)s, %(description)s, 
+                     %(content_embedding)s::vector, %(min_age)s, %(max_age)s, %(indoor)s, 
+                     %(weather_dependent)s, %(duration_minutes)s, %(created_at)s)
+                    ON CONFLICT (destination_id, activity_name) DO UPDATE SET
+                        description = EXCLUDED.description,
+                        content_embedding = EXCLUDED.content_embedding
+                    """,
+                    activity_data
+                )
+                conn.commit()
+            
+            print(f"    ✓ Added activity: {article['title']}")
+        
+        except Exception as e:
+            print(f"    ⚠️  Error processing activity '{attraction.get('title', 'unknown')}': {e}")
             continue
-        
-        # Generate embedding
-        text_for_embedding = f"{article['description']}. {article['extract'][:500]}"
-        embedding = generate_embeddings([text_for_embedding])[0]
-        
-        # Infer activity properties (simple heuristics)
-        is_indoor = any(keyword in article["extract"].lower() for keyword in ["museum", "indoor", "aquarium", "gallery"])
-        is_kid_friendly = any(keyword in article["extract"].lower() for keyword in ["children", "kid", "family", "playground"])
-        
-        activity_data = {
-            "destination_id": destination_id,
-            "activity_name": article["title"],
-            "activity_type": "attraction",
-            "description": article["extract"],
-            "content_embedding": embedding,
-            "min_age": 0 if is_kid_friendly else 5,
-            "max_age": None,
-            "indoor": is_indoor,
-            "weather_dependent": not is_indoor,
-            "duration_minutes": 120,
-            "created_at": datetime.utcnow()
-        }
-        
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO activities 
-                (destination_id, activity_name, activity_type, description, content_embedding, 
-                 min_age, max_age, indoor, weather_dependent, duration_minutes, created_at)
-                VALUES 
-                (%(destination_id)s, %(activity_name)s, %(activity_type)s, %(description)s, 
-                 %(content_embedding)s::vector, %(min_age)s, %(max_age)s, %(indoor)s, 
-                 %(weather_dependent)s, %(duration_minutes)s, %(created_at)s)
-                ON CONFLICT DO NOTHING
-                """,
-                activity_data
-            )
-            conn.commit()
-        
-        print(f"    ✓ Added activity: {article['title']}")
 
 
 # ============================================================================
@@ -360,7 +414,7 @@ def main():
     print("="*80)
     print("Family Adventure Planner - Wikimedia Ingestion Pipeline")
     print("="*80)
-    print(f"Embedding Model: {EMBEDDING_MODEL}")
+    print(f"Embedding: Simple TF-IDF (768-dim)")
     print(f"Destinations to process: {len(SEED_DESTINATIONS)}")
     print()
     
@@ -370,6 +424,7 @@ def main():
     print("✓ Connected\n")
     
     # Process each destination
+    processed_count = 0
     for dest_name in SEED_DESTINATIONS:
         try:
             # Process destination
@@ -384,22 +439,24 @@ def main():
                 
                 # Process activities
                 process_activities_for_destination(dest_id, dest_name, conn)
+                processed_count += 1
             
             print()
         
         except Exception as e:
             print(f"  ❌ Error processing {dest_name}: {e}\n")
+            import traceback
+            traceback.print_exc()
             continue
     
     conn.close()
     
     print("="*80)
-    print("Pipeline Complete!")
+    print(f"Pipeline Complete! Processed {processed_count}/{len(SEED_DESTINATIONS)} destinations")
     print("="*80)
     print("\nNext steps:")
     print("1. Query destinations: SELECT name, country FROM destinations;")
     print("2. Test semantic search: SELECT activity_name FROM activities ORDER BY content_embedding <=> '[...]'::vector LIMIT 5;")
-    print("3. Build Flask API with /activities/search endpoint")
 
 
 if __name__ == "__main__":
