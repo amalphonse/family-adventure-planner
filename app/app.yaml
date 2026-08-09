@@ -1,0 +1,47 @@
+# Databricks App Configuration for Family Adventure Planner
+# Deploy with: databricks apps deploy family-adventure-planner
+
+name: family-adventure-planner
+description: AI-powered trip planning assistant with semantic search over family-friendly activities
+
+# App runtime configuration
+resources:
+  - name: family-adventure-planner-app
+    description: Flask API + Frontend for Family Adventure Planner
+    
+    # App serving configuration
+    app:
+      # Command to start the Flask server
+      command:
+        - python
+        - app.py
+      
+      # Environment variables
+      env:
+        - name: FLASK_ENV
+          value: production
+        - name: PORT
+          value: "8000"
+        - name: LAKEBASE_PROJECT
+          value: family-adventure-planner
+        - name: LAKEBASE_BRANCH
+          value: production
+        - name: LAKEBASE_DATABASE
+          value: databricks_postgres
+      
+      # Python dependencies
+      dependencies:
+        - flask
+        - flask-cors
+        - psycopg[binary]
+        - requests
+        - databricks-sdk
+      
+      # Files to include in the app
+      # All files in the app/ directory will be included
+      source_code_path: .
+
+# Permissions (optional - defaults to creator only)
+permissions:
+  - level: CAN_USE
+    group_name: users
