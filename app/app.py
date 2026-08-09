@@ -454,17 +454,17 @@ def seed_database():
             text = f"{page.get('pageprops', {}).get('wikibase-shortdesc', '')}. {extract}"
             embedding = simple_embedding(text)
             
-            with get_db_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """INSERT INTO destinations (name, latitude, longitude, description, description_embedding, country, created_at)
-                        VALUES (%s, %s, %s, %s, %s::vector, %s, NOW())
-                        ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description, description_embedding = EXCLUDED.description_embedding
-                        RETURNING destination_id""",
-                        (page.get('title', dest_name), geo['latitude'], geo['longitude'], extract, embedding, geo.get('country', 'Unknown'))
-                    )
-                    added.append({"id": cur.fetchone()[0], "name": page.get('title', dest_name)})
-                    conn.commit()
+            conn = get_db_connection()
+            result = conn.run(
+                """INSERT INTO destinations (name, latitude, longitude, description, description_embedding, country, created_at)
+                VALUES ($1, $2, $3, $4, $5::vector, $6, NOW())
+                ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description, description_embedding = EXCLUDED.description_embedding
+                RETURNING destination_id""",
+                page.get('title', dest_name), geo['latitude'], geo['longitude'], extract, embedding, geo.get('country', 'Unknown')
+            )
+            dest_id = result[0][0]  # pg8000 returns list of tuples
+            added.append({"id": dest_id, "name": page.get('title', dest_name)})
+            conn.close()
         
         return jsonify({"status": "success", "added": len(added), "destinations": added})
     except Exception as e:
