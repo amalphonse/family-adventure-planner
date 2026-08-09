@@ -38,6 +38,7 @@ resources:
         - pg8000
         - requests
         - databricks-sdk
+        - sentence-transformers
       
       # Files to include in the app
       # All files in the app/ directory will be included

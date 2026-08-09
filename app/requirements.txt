@@ -12,3 +12,6 @@ databricks-sdk>=0.118.0
 
 # HTTP requests for third-party APIs
 requests>=2.31.0
+
+# Semantic search embeddings
+sentence-transformers>=2.2.0

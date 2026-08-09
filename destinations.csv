@@ -1,0 +1,16 @@
+name,country,latitude,longitude,description,best_season,family_friendly
+Paris,France,48.8566,2.3522,"City of Light with Eiffel Tower, Louvre Museum, and charming cafes. Perfect for culture and history.",Spring,true
+Tokyo,Japan,35.6762,139.6503,"Vibrant city blending ancient temples with modern technology. Amazing food and unique experiences.",Spring,true
+Orlando,USA,28.5383,-81.3792,"Theme park capital with Disney World, Universal Studios, and endless family entertainment.",Fall,true
+London,UK,51.5074,-0.1278,"Historic city with Big Ben, Buckingham Palace, and world-class museums. Rich in culture.",Summer,true
+Barcelona,Spain,41.3851,2.1734,"Mediterranean beauty with Gaudi architecture, beaches, and incredible Spanish cuisine.",Spring,true
+San Diego,USA,32.7157,-117.1611,"Perfect weather, beautiful beaches, LEGOLAND, San Diego Zoo, and SeaWorld for families.",Year-round,true
+Reykjavik,Iceland,64.1466,-21.9426,"Gateway to natural wonders: geysers, waterfalls, Northern Lights, and unique landscapes.",Summer,true
+Rome,Italy,41.9028,12.4964,"Eternal City with Colosseum, Vatican, amazing pasta, and 2000+ years of history.",Spring,true
+Sydney,Australia,-33.8688,151.2093,"Stunning harbor city with Opera House, beautiful beaches, and great outdoor activities.",Spring,true
+Cancun,Mexico,21.1619,-86.8515,"Caribbean paradise with white sand beaches, Mayan ruins, and all-inclusive resorts.",Winter,true
+Dubai,UAE,25.2048,55.2708,"Luxury desert city with tallest building, indoor skiing, and futuristic attractions.",Winter,true
+Amsterdam,Netherlands,52.3676,4.9041,"Charming canal city with bikes, Anne Frank House, and colorful tulip gardens.",Spring,true
+Bali,Indonesia,-8.3405,115.0920,"Tropical island paradise with rice terraces, temples, beaches, and rich culture.",Summer,true
+New York City,USA,40.7128,-74.0060,"The city that never sleeps: Statue of Liberty, Times Square, Central Park, Broadway shows.",Fall,true
+Banff,Canada,51.1784,-115.5708,"Stunning mountain town in the Rockies with turquoise lakes, skiing, and wildlife.",Summer,true
