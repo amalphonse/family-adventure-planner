@@ -53,8 +53,12 @@ _connection_cache = {}
 
 def get_db_connection():
     """
-    Get a fresh database connection to Lakebase.
-    Uses cached credentials that auto-refresh on expiry.
+    Get a fresh database connection to Lakebase using pg8000 (pure Python).
+    
+    Note: This function requires proper Databricks authentication context.
+    It works in notebooks but may fail in deployed Databricks Apps due to
+    different authentication scopes. For production apps, consider using
+    service principal authentication or running data ingestion separately.
     """
     w = WorkspaceClient()
     
@@ -67,14 +71,14 @@ def get_db_connection():
     cred = w.postgres.generate_database_credential(endpoint=endpoint_name)
     token = cred.token
     
-    # Create connection
-    conn = psycopg.connect(
+    # Create connection using pg8000 (pure Python, no binary deps)
+    conn = pg8000.native.Connection(
         host=host,
         port=5432,
-        dbname=LAKEBASE_DATABASE,
+        database=LAKEBASE_DATABASE,
         user="databricks",
         password=token,
-        sslmode="require"
+        ssl_context=True
     )
     
     return conn
@@ -136,20 +140,19 @@ def list_destinations():
         ]
     """
     try:
-        with get_db_connection() as conn:
-            with conn.cursor(row_factory=dict_row) as cur:
-                cur.execute("""
-                    SELECT 
-                        destination_id,
-                        name,
-                        latitude,
-                        longitude,
-                        country,
-                        description
-                    FROM destinations
-                    ORDER BY name
-                """)
-                destinations = cur.fetchall()
+        conn = get_db_connection()
+        destinations = query_as_dicts(conn, """
+            SELECT 
+                destination_id,
+                name,
+                latitude,
+                longitude,
+                country,
+                description
+            FROM destinations
+            ORDER BY name
+        """)
+        conn.close()
         
         return jsonify(destinations)
     

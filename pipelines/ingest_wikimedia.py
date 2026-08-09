@@ -22,7 +22,7 @@ import requests
 import json
 from typing import List, Dict, Optional
 from datetime import datetime
-import psycopg
+import pg8000.native
 from databricks.sdk import WorkspaceClient
 import re
 import math
@@ -245,7 +245,7 @@ def get_lakebase_connection():
     Create a connection to Lakebase Postgres using Databricks SDK.
     
     Returns:
-        psycopg connection object
+        pg8000 connection object
     """
     w = WorkspaceClient()
     
@@ -258,14 +258,14 @@ def get_lakebase_connection():
     cred = w.postgres.generate_database_credential(endpoint=endpoint_name)
     token = cred.token
     
-    # Connect
-    conn = psycopg.connect(
+    # Connect using pg8000 (pure Python, no binary deps)
+    conn = pg8000.native.Connection(
         host=host,
         port=5432,
-        dbname=LAKEBASE_DATABASE,
+        database=LAKEBASE_DATABASE,
         user="databricks",
         password=token,
-        sslmode="require"
+        ssl_context=True
     )
     
     return conn
