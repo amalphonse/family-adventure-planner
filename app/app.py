@@ -26,8 +26,7 @@ Usage:
 
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-import psycopg
-from psycopg.rows import dict_row
+import pg8000.native
 from databricks.sdk import WorkspaceClient
 from typing import Optional, List, Dict
 import os
@@ -54,107 +53,39 @@ _connection_cache = {}
 def get_db_connection():
     """
     Get a fresh database connection to Lakebase using pg8000 (pure Python).
-    Uses Databricks REST API to get endpoint details and generate credentials.
+    Uses static credentials from environment variables.
     """
     import os
-    import requests
     
-    # Create WorkspaceClient - it handles auth automatically in Databricks Apps
-    w = WorkspaceClient()
+    host = os.environ.get('LAKEBASE_HOST')
+    database = os.environ.get('LAKEBASE_DATABASE')
+    user = os.environ.get('LAKEBASE_USER')
+    password = os.environ.get('LAKEBASE_PASSWORD')
     
-    # Get workspace URL
-    workspace_url = w.config.host
-    if not workspace_url:
-        workspace_url = os.environ.get('DATABRICKS_HOST', '')
+    if not all([host, database, user, password]):
+        raise Exception(f"Missing Lakebase connection environment variables. Have: host={bool(host)}, db={bool(database)}, user={bool(user)}, pwd={bool(password)}")
     
-    # Get auth token - try multiple sources
-    token_source = None
-    
-    # Method 1: Environment variable (Databricks Apps set this)
-    token_source = os.environ.get('DATABRICKS_TOKEN')
-    
-    # Method 2: From SDK config
-    if not token_source:
-        try:
-            # The SDK's config.authenticate() returns auth headers
-            w.config.authenticate()
-            if hasattr(w.config, 'token') and callable(w.config.token):
-                token_source = w.config.token()
-            elif hasattr(w.config, 'token'):
-                token_source = w.config.token
-        except:
-            pass
-    
-    # Method 3: Use SDK's internal API client to make the calls
-    # (it handles auth automatically)
-    if not token_source:
-        # Fall back to using the SDK's API client which handles auth
-        try:
-            # Use the SDK's internal HTTP client
-            api_client = w.api_client
-            token_source = "SDK_INTERNAL"  # Signal to use SDK client below
-        except:
-            raise Exception("Cannot get Databricks authentication token. Tried: env var, SDK config, SDK API client.")
-    
-    # Use REST API to get Lakebase endpoint details
-    endpoint_path = f"projects/{LAKEBASE_PROJECT}/branches/{LAKEBASE_BRANCH}/endpoints/primary"
-    
-    # Get endpoint info
-    if token_source == "SDK_INTERNAL":
-        # Use SDK's internal API client (handles auth automatically)
-        endpoint_data = api_client.do(
-            'GET',
-            f"/api/2.0/lakebase/postgres/endpoints/{endpoint_path}"
-        )
-    else:
-        resp = requests.get(
-            f"{workspace_url}/api/2.0/lakebase/postgres/endpoints/{endpoint_path}",
-            headers={"Authorization": f"Bearer {token_source}"},
-            timeout=10
-        )
-        if resp.status_code != 200:
-            raise Exception(f"Cannot get Lakebase endpoint: {resp.status_code} - {resp.text}")
-        endpoint_data = resp.json()
-    
-    host = endpoint_data.get('status', {}).get('hosts', {}).get('host')
-    
-    if not host:
-        raise Exception("Lakebase endpoint host not found in response")
-    
-    # Generate database credential
-    if token_source == "SDK_INTERNAL":
-        cred_data = api_client.do(
-            'POST',
-            "/api/2.0/lakebase/postgres/credentials/generate",
-            data={"endpoint": endpoint_path}
-        )
-    else:
-        cred_resp = requests.post(
-            f"{workspace_url}/api/2.0/lakebase/postgres/credentials/generate",
-            headers={"Authorization": f"Bearer {token_source}"},
-            json={"endpoint": endpoint_path},
-            timeout=10
-        )
-        if cred_resp.status_code != 200:
-            raise Exception(f"Cannot generate Lakebase credential: {cred_resp.status_code} - {cred_resp.text}")
-        cred_data = cred_resp.json()
-    
-    db_token = cred_data.get('token')
-    
-    if not db_token:
-        raise Exception("Database token not found in credential response")
-    
-    # Create connection using pg8000 (pure Python, no binary deps)
+    # Create connection using pg8000 (pure Python, no binary deps, FIPS-safe)
     conn = pg8000.native.Connection(
         host=host,
         port=5432,
-        database=LAKEBASE_DATABASE,
-        user="databricks",
-        password=db_token,
+        database=database,
+        user=user,
+        password=password,
         ssl_context=True
     )
     
     return conn
+
+
+
+def rows_to_dicts(result):
+    """Convert pg8000 result to list of dicts. pg8000.native.run() returns (columns, row1, row2, ...)"""
+    if not result or len(result) < 2:
+        return []
+    columns = result[0]
+    rows = result[1:]
+    return [dict(zip(columns, row)) for row in rows]
 
 
 def generate_placeholder_query_embedding() -> List[float]:
@@ -213,23 +144,21 @@ def list_destinations():
         ]
     """
     try:
-        with get_db_connection() as conn:
-            with conn.cursor(row_factory=dict_row) as cur:
-                cur.execute("""
-                    SELECT 
-                        destination_id,
-                        name,
-                        latitude,
-                        longitude,
-                        country,
-                        description
-                    FROM destinations
-                    ORDER BY name
-                """)
-                destinations = cur.fetchall()
-        
+        conn = get_db_connection()
+        result = conn.run("""
+            SELECT 
+                destination_id,
+                name,
+                latitude,
+                longitude,
+                country,
+                description
+            FROM destinations
+            ORDER BY name
+        """)
+        conn.close()
+        destinations = rows_to_dicts(result)
         return jsonify(destinations)
-    
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -240,27 +169,26 @@ def get_destination(destination_id: int):
     Get a single destination by ID.
     """
     try:
-        with get_db_connection() as conn:
-            with conn.cursor(row_factory=dict_row) as cur:
-                cur.execute("""
-                    SELECT 
-                        destination_id,
-                        name,
-                        latitude,
-                        longitude,
-                        country,
-                        description,
-                        created_at
-                    FROM destinations
-                    WHERE destination_id = %s
-                """, (destination_id,))
-                destination = cur.fetchone()
+        conn = get_db_connection()
+        result = conn.run("""
+            SELECT 
+                destination_id,
+                name,
+                latitude,
+                longitude,
+                country,
+                description,
+                created_at
+            FROM destinations
+            WHERE destination_id = :dest_id
+        """, dest_id=destination_id)
+        conn.close()
+        destinations = rows_to_dicts(result)
         
-        if destination:
-            return jsonify(destination)
+        if destinations:
+            return jsonify(destinations[0])
         else:
             return jsonify({"error": "Destination not found"}), 404
-    
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -287,27 +215,25 @@ def get_destination_activities(destination_id: int):
         ]
     """
     try:
-        with get_db_connection() as conn:
-            with conn.cursor(row_factory=dict_row) as cur:
-                cur.execute("""
-                    SELECT 
-                        activity_id,
-                        activity_name,
-                        activity_type,
-                        description,
-                        min_age,
-                        max_age,
-                        indoor,
-                        weather_dependent,
-                        duration_minutes
-                    FROM activities
-                    WHERE destination_id = %s
-                    ORDER BY activity_name
-                """, (destination_id,))
-                activities = cur.fetchall()
-        
+        conn = get_db_connection()
+        result = conn.run("""
+            SELECT 
+                activity_id,
+                activity_name,
+                activity_type,
+                description,
+                min_age,
+                max_age,
+                indoor,
+                weather_dependent,
+                duration_minutes
+            FROM activities
+            WHERE destination_id = :dest_id
+            ORDER BY activity_name
+        """, dest_id=destination_id)
+        conn.close()
+        activities = rows_to_dicts(result)
         return jsonify(activities)
-    
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -383,8 +309,8 @@ def search_activities():
         where_clause = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
         
         # Execute semantic search
-        with get_db_connection() as conn:
-            with conn.cursor(row_factory=dict_row) as cur:
+        conn = get_db_connection()
+        try:
                 query_sql = f"""
                     SELECT 
                         a.activity_id,
@@ -405,8 +331,10 @@ def search_activities():
                     LIMIT %s
                 """
                 
-                cur.execute(query_sql, params)
-                results = cur.fetchall()
+                result = conn.run(query_sql)
+                results = rows_to_dicts(result)
+        finally:
+            conn.close()
         
         return jsonify({
             "query": query_text,

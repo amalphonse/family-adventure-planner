@@ -35,7 +35,7 @@ resources:
       dependencies:
         - flask
         - flask-cors
-        - psycopg[binary]
+        - pg8000
         - requests
         - databricks-sdk
       
