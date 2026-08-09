@@ -166,6 +166,9 @@ async function loadDestinations() {
         // Update destination count
         document.getElementById('destinationCount').textContent = destinations.length;
         
+        // Populate destination filter dropdown
+        populateDestinationFilter(destinations);
+        
         // Display destinations
         displayDestinations(destinations);
         
@@ -205,6 +208,22 @@ function displayDestinations(destinations) {
     container.innerHTML = html;
 }
 
+// Populate destination filter dropdown
+function populateDestinationFilter(destinations) {
+    const select = document.getElementById('destinationFilter');
+    
+    // Clear existing options (except "All Destinations")
+    select.innerHTML = '<option value="">All Destinations</option>';
+    
+    // Add destination options
+    destinations.forEach(dest => {
+        const option = document.createElement('option');
+        option.value = dest.destination_id;
+        option.textContent = dest.name;
+        select.appendChild(option);
+    });
+}
+
 // Search activities for a specific destination
 function searchDestinationActivities(destinationName) {
     document.getElementById('searchInput').value = destinationName;
@@ -217,6 +236,7 @@ function clearFilters() {
     document.getElementById('minAge').value = '';
     document.getElementById('maxAge').value = '';
     document.getElementById('indoorFilter').value = '';
+    document.getElementById('destinationFilter').value = '';
 }
 
 // Show loading state

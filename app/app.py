@@ -270,6 +270,7 @@ def search_activities():
     min_age = request.args.get('min_age', type=int)
     max_age = request.args.get('max_age', type=int)
     indoor_filter = request.args.get('indoor')
+    destination_id = request.args.get('destination_id', type=int)
     limit = min(int(request.args.get('limit', 10)), 50)
     
     if not query_text:
@@ -297,6 +298,10 @@ def search_activities():
             indoor_bool = indoor_filter.lower() == 'true'
             where_clauses.append("a.indoor = %s")
             params.insert(-1, indoor_bool)
+        
+        if destination_id is not None:
+            where_clauses.append("a.destination_id = %s")
+            params.insert(-1, destination_id)
         
         where_clause = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
         
