@@ -376,7 +376,18 @@ def seed_database():
             norm = math.sqrt(sum(x**2 for x in embedding))
             return [x / norm for x in embedding] if norm > 0 else embedding
         
-        destinations_to_add = ["San Francisco", "Golden Gate Park", "Exploratorium San Francisco"]
+        destinations_to_add = [
+            "San Francisco",
+            "Golden Gate Park",
+            "Exploratorium San Francisco",
+            "California Academy of Sciences",
+            "Pier 39",
+            "Aquarium of the Bay",
+            "Children's Creativity Museum",
+            "San Francisco Zoo",
+            "Crissy Field",
+            "Presidio Tunnel Tops"
+        ]
         added = []
         
         for dest_name in destinations_to_add:
