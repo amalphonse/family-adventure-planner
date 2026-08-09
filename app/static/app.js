@@ -27,13 +27,14 @@ async function seedDatabase() {
         
         if (data.status === 'success') {
             alert(`✅ Database seeded! Added ${data.added} destinations.`);
-            loadDestinations(); // Reload destinations
+            loadDestinations(); // Reload destinations (will hide button)
         } else {
             alert(`❌ Error: ${data.error || 'Unknown error'}`);
+            btn.disabled = false;
+            btn.textContent = '🌱 Seed Database';
         }
     } catch (error) {
         alert(`❌ Error seeding database: ${error.message}`);
-    } finally {
         btn.disabled = false;
         btn.textContent = '🌱 Seed Database';
     }
@@ -166,6 +167,14 @@ async function loadDestinations() {
         // Update destination count
         document.getElementById('destinationCount').textContent = destinations.length;
         
+        // Hide seed button if destinations exist
+        const seedBtn = document.getElementById('seedBtn');
+        if (destinations.length > 0) {
+            seedBtn.style.display = 'none';
+        } else {
+            seedBtn.style.display = 'inline-block';
+        }
+        
         // Populate destination filter dropdown
         populateDestinationFilter(destinations);
         
@@ -236,7 +245,6 @@ function clearFilters() {
     document.getElementById('minAge').value = '';
     document.getElementById('maxAge').value = '';
     document.getElementById('indoorFilter').value = '';
-    document.getElementById('destinationFilter').value = '';
 }
 
 // Show loading state
