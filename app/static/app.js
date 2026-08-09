@@ -15,6 +15,30 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
+// Seed database with sample destinations
+async function seedDatabase() {
+    const btn = document.getElementById('seedBtn');
+    btn.disabled = true;
+    btn.textContent = '⏳ Seeding...';
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/admin/seed`);
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+            alert(`✅ Database seeded! Added ${data.added} destinations.`);
+            loadDestinations(); // Reload destinations
+        } else {
+            alert(`❌ Error: ${data.error || 'Unknown error'}`);
+        }
+    } catch (error) {
+        alert(`❌ Error seeding database: ${error.message}`);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '🌱 Seed Database';
+    }
+}
+
 // Search activities with semantic search
 async function searchActivities() {
     const query = document.getElementById('searchInput').value.trim();

@@ -346,7 +346,7 @@ def search_activities():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/admin/seed', methods=['POST'])
+@app.route('/admin/seed', methods=['GET', 'POST'])
 def seed_database():
     """Admin endpoint to seed the database with sample destinations."""
     try:
