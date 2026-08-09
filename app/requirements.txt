@@ -5,7 +5,7 @@ flask>=3.0.0
 flask-cors>=4.0.0
 
 # Postgres + pgvector
-psycopg[binary]>=3.1.0
+pg8000>=1.30.0
 
 # Databricks SDK for Lakebase connection
 databricks-sdk>=0.118.0
