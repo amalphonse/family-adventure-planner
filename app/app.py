@@ -26,8 +26,7 @@ Usage:
 
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-import psycopg
-from psycopg.rows import dict_row
+import pg8000.native
 from databricks.sdk import WorkspaceClient
 from typing import Optional, List, Dict
 import os
@@ -54,23 +53,103 @@ _connection_cache = {}
 def get_db_connection():
     """
     Get a fresh database connection to Lakebase using pg8000 (pure Python).
-    Uses static credentials from environment variables.
+    Uses Databricks REST API to get endpoint details and generate credentials.
     """
-    host = os.environ.get('LAKEBASE_HOST')
-    database = os.environ.get('LAKEBASE_DATABASE')
-    user = os.environ.get('LAKEBASE_USER')
-    password = os.environ.get('LAKEBASE_PASSWORD')
+    import os
+    import requests
     
-    if not all([host, database, user, password]):
-        raise Exception("Missing Lakebase connection environment variables")
+    # Create WorkspaceClient - it handles auth automatically in Databricks Apps
+    w = WorkspaceClient()
+    
+    # Get workspace URL
+    workspace_url = w.config.host
+    if not workspace_url:
+        workspace_url = os.environ.get('DATABRICKS_HOST', '')
+    
+    # Get auth token - try multiple sources
+    token_source = None
+    
+    # Method 1: Environment variable (Databricks Apps set this)
+    token_source = os.environ.get('DATABRICKS_TOKEN')
+    
+    # Method 2: From SDK config
+    if not token_source:
+        try:
+            # The SDK's config.authenticate() returns auth headers
+            w.config.authenticate()
+            if hasattr(w.config, 'token') and callable(w.config.token):
+                token_source = w.config.token()
+            elif hasattr(w.config, 'token'):
+                token_source = w.config.token
+        except:
+            pass
+    
+    # Method 3: Use SDK's internal API client to make the calls
+    # (it handles auth automatically)
+    if not token_source:
+        # Fall back to using the SDK's API client which handles auth
+        try:
+            # Use the SDK's internal HTTP client
+            api_client = w.api_client
+            token_source = "SDK_INTERNAL"  # Signal to use SDK client below
+        except:
+            raise Exception("Cannot get Databricks authentication token. Tried: env var, SDK config, SDK API client.")
+    
+    # Use REST API to get Lakebase endpoint details
+    endpoint_path = f"projects/{LAKEBASE_PROJECT}/branches/{LAKEBASE_BRANCH}/endpoints/primary"
+    
+    # Get endpoint info
+    if token_source == "SDK_INTERNAL":
+        # Use SDK's internal API client (handles auth automatically)
+        endpoint_data = api_client.do(
+            'GET',
+            f"/api/2.0/lakebase/postgres/endpoints/{endpoint_path}"
+        )
+    else:
+        resp = requests.get(
+            f"{workspace_url}/api/2.0/lakebase/postgres/endpoints/{endpoint_path}",
+            headers={"Authorization": f"Bearer {token_source}"},
+            timeout=10
+        )
+        if resp.status_code != 200:
+            raise Exception(f"Cannot get Lakebase endpoint: {resp.status_code} - {resp.text}")
+        endpoint_data = resp.json()
+    
+    host = endpoint_data.get('status', {}).get('hosts', {}).get('host')
+    
+    if not host:
+        raise Exception("Lakebase endpoint host not found in response")
+    
+    # Generate database credential
+    if token_source == "SDK_INTERNAL":
+        cred_data = api_client.do(
+            'POST',
+            "/api/2.0/lakebase/postgres/credentials/generate",
+            data={"endpoint": endpoint_path}
+        )
+    else:
+        cred_resp = requests.post(
+            f"{workspace_url}/api/2.0/lakebase/postgres/credentials/generate",
+            headers={"Authorization": f"Bearer {token_source}"},
+            json={"endpoint": endpoint_path},
+            timeout=10
+        )
+        if cred_resp.status_code != 200:
+            raise Exception(f"Cannot generate Lakebase credential: {cred_resp.status_code} - {cred_resp.text}")
+        cred_data = cred_resp.json()
+    
+    db_token = cred_data.get('token')
+    
+    if not db_token:
+        raise Exception("Database token not found in credential response")
     
     # Create connection using pg8000 (pure Python, no binary deps)
     conn = pg8000.native.Connection(
         host=host,
         port=5432,
-        database=database,
-        user=user,
-        password=password,
+        database=LAKEBASE_DATABASE,
+        user="databricks",
+        password=db_token,
         ssl_context=True
     )
     
@@ -407,17 +486,24 @@ def seed_database():
             text = f"{page.get('pageprops', {}).get('wikibase-shortdesc', '')}. {extract}"
             embedding = simple_embedding(text)
             
-            with get_db_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """INSERT INTO destinations (name, latitude, longitude, description, description_embedding, country, created_at)
-                        VALUES (%s, %s, %s, %s, %s::vector, %s, NOW())
-                        ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description, description_embedding = EXCLUDED.description_embedding
-                        RETURNING destination_id""",
-                        (page.get('title', dest_name), geo['latitude'], geo['longitude'], extract, embedding, geo.get('country', 'Unknown'))
-                    )
-                    added.append({"id": cur.fetchone()[0], "name": page.get('title', dest_name)})
-                    conn.commit()
+            conn = get_db_connection()
+            try:
+                result = conn.run(
+                    """INSERT INTO destinations (name, latitude, longitude, description, description_embedding, country, created_at)
+                    VALUES (:name, :lat, :lon, :desc, :emb::vector, :country, NOW())
+                    ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description, description_embedding = EXCLUDED.description_embedding
+                    RETURNING destination_id""",
+                    name=page.get('title', dest_name),
+                    lat=geo['latitude'],
+                    lon=geo['longitude'],
+                    desc=extract,
+                    emb=str(embedding),
+                    country=geo.get('country', 'Unknown')
+                )
+                dest_id = result[1][0] if len(result) > 1 else None
+                added.append({"id": dest_id, "name": page.get('title', dest_name)})
+            finally:
+                conn.close()
         
         return jsonify({"status": "success", "added": len(added), "destinations": added})
     except Exception as e:
