@@ -62,15 +62,18 @@ print("Embedding model loaded!")
 def get_db_connection():
     """
     Get a fresh database connection to Lakebase using pg8000 (pure Python).
-    Uses static credentials from environment variables.
+    Uses Databricks Apps auto-injected environment variables from the 'database' resource.
+    Variables: DATABASE_HOST, DATABASE_DATABASE, DATABASE_USER, DATABASE_PASSWORD
     """
-    host = os.environ.get('LAKEBASE_HOST')
-    database = os.environ.get('LAKEBASE_DATABASE')
-    user = os.environ.get('LAKEBASE_USER')
-    password = os.environ.get('LAKEBASE_PASSWORD')
+    host = os.environ.get('DATABASE_HOST')
+    database = os.environ.get('DATABASE_DATABASE')
+    user = os.environ.get('DATABASE_USER')
+    password = os.environ.get('DATABASE_PASSWORD')
     
     if not all([host, database, user, password]):
-        raise Exception("Missing Lakebase connection environment variables")
+        # Debug: print available env vars
+        available = [k for k in os.environ.keys() if 'DATABASE' in k or 'POSTGRES' in k or 'LAKEBASE' in k]
+        raise Exception(f"Missing database connection environment variables. Available: {available}")
     
     # Create connection using pg8000 (pure Python, no binary deps)
     conn = pg8000.native.Connection(
@@ -213,20 +216,24 @@ def list_destinations():
         ]
     """
     try:
-        with get_db_connection() as conn:
-            with conn.cursor(row_factory=dict_row) as cur:
-                cur.execute("""
-                    SELECT 
-                        destination_id,
-                        name,
-                        latitude,
-                        longitude,
-                        country,
-                        description
-                    FROM destinations
-                    ORDER BY name
-                """)
-                destinations = cur.fetchall()
+        conn = get_db_connection()
+        # pg8000.native returns rows as lists - need to convert to dicts
+        rows = conn.run("""
+            SELECT 
+                destination_id,
+                name,
+                latitude,
+                longitude,
+                country,
+                description
+            FROM destinations
+            ORDER BY name
+        """)
+        conn.close()
+        
+        # Convert rows to list of dictionaries
+        columns = ['destination_id', 'name', 'latitude', 'longitude', 'country', 'description']
+        destinations = [dict(zip(columns, row)) for row in rows]
         
         return jsonify(destinations)
     
@@ -240,23 +247,24 @@ def get_destination(destination_id: int):
     Get a single destination by ID.
     """
     try:
-        with get_db_connection() as conn:
-            with conn.cursor(row_factory=dict_row) as cur:
-                cur.execute("""
-                    SELECT 
-                        destination_id,
-                        name,
-                        latitude,
-                        longitude,
-                        country,
-                        description,
-                        created_at
-                    FROM destinations
-                    WHERE destination_id = %s
-                """, (destination_id,))
-                destination = cur.fetchone()
+        conn = get_db_connection()
+        rows = conn.run("""
+            SELECT 
+                destination_id,
+                name,
+                latitude,
+                longitude,
+                country,
+                description,
+                created_at
+            FROM destinations
+            WHERE destination_id = :id
+        """, id=destination_id)
+        conn.close()
         
-        if destination:
+        if rows:
+            columns = ['destination_id', 'name', 'latitude', 'longitude', 'country', 'description', 'created_at']
+            destination = dict(zip(columns, rows[0]))
             return jsonify(destination)
         else:
             return jsonify({"error": "Destination not found"}), 404
@@ -287,24 +295,27 @@ def get_destination_activities(destination_id: int):
         ]
     """
     try:
-        with get_db_connection() as conn:
-            with conn.cursor(row_factory=dict_row) as cur:
-                cur.execute("""
-                    SELECT 
-                        activity_id,
-                        activity_name,
-                        activity_type,
-                        description,
-                        min_age,
-                        max_age,
-                        indoor,
-                        weather_dependent,
-                        duration_minutes
-                    FROM activities
-                    WHERE destination_id = %s
-                    ORDER BY activity_name
-                """, (destination_id,))
-                activities = cur.fetchall()
+        conn = get_db_connection()
+        rows = conn.run("""
+            SELECT 
+                activity_id,
+                activity_name,
+                activity_type,
+                description,
+                min_age,
+                max_age,
+                indoor,
+                weather_dependent,
+                duration_minutes
+            FROM activities
+            WHERE destination_id = :id
+            ORDER BY activity_name
+        """, id=destination_id)
+        conn.close()
+        
+        columns = ['activity_id', 'activity_name', 'activity_type', 'description', 
+                   'min_age', 'max_age', 'indoor', 'weather_dependent', 'duration_minutes']
+        activities = [dict(zip(columns, row)) for row in rows]
         
         return jsonify(activities)
     
@@ -358,54 +369,58 @@ def search_activities():
         query_embedding = generate_query_embedding(query_text)
         embedding_str = str(query_embedding)
         
-        # Build dynamic WHERE clause for filters
+        # Build dynamic WHERE clause for filters (using pg8000 named parameters)
         where_clauses = []
-        params = [embedding_str, limit]
+        params = {'embedding1': embedding_str, 'embedding2': embedding_str, 'limit': limit}
         
         if min_age is not None:
-            where_clauses.append("a.min_age <= %s")
-            params.insert(-1, min_age)
+            where_clauses.append("a.min_age <= :min_age")
+            params['min_age'] = min_age
         
         if max_age is not None:
-            where_clauses.append("(a.max_age IS NULL OR a.max_age >= %s)")
-            params.insert(-1, max_age)
+            where_clauses.append("(a.max_age IS NULL OR a.max_age >= :max_age)")
+            params['max_age'] = max_age
         
         if indoor_filter is not None:
             indoor_bool = indoor_filter.lower() == 'true'
-            where_clauses.append("a.indoor = %s")
-            params.insert(-1, indoor_bool)
+            where_clauses.append("a.indoor = :indoor")
+            params['indoor'] = indoor_bool
         
         if destination_id is not None:
-            where_clauses.append("a.destination_id = %s")
-            params.insert(-1, destination_id)
+            where_clauses.append("a.destination_id = :dest_id")
+            params['dest_id'] = destination_id
         
         where_clause = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
         
-        # Execute semantic search
-        with get_db_connection() as conn:
-            with conn.cursor(row_factory=dict_row) as cur:
-                query_sql = f"""
-                    SELECT 
-                        a.activity_id,
-                        a.activity_name,
-                        a.activity_type,
-                        a.description,
-                        d.name as destination_name,
-                        a.min_age,
-                        a.max_age,
-                        a.indoor,
-                        a.weather_dependent,
-                        a.duration_minutes,
-                        1 - (a.content_embedding <=> %s::vector) as similarity_score
-                    FROM activities a
-                    JOIN destinations d ON a.destination_id = d.destination_id
-                    {where_clause}
-                    ORDER BY a.content_embedding <=> %s::vector
-                    LIMIT %s
-                """
-                
-                cur.execute(query_sql, params)
-                results = cur.fetchall()
+        # Execute semantic search using pg8000
+        conn = get_db_connection()
+        query_sql = f"""
+            SELECT 
+                a.activity_id,
+                a.activity_name,
+                a.activity_type,
+                a.description,
+                d.name as destination_name,
+                a.min_age,
+                a.max_age,
+                a.indoor,
+                a.weather_dependent,
+                a.duration_minutes,
+                1 - (a.content_embedding <=> :embedding1::vector) as similarity_score
+            FROM activities a
+            JOIN destinations d ON a.destination_id = d.destination_id
+            {where_clause}
+            ORDER BY a.content_embedding <=> :embedding2::vector
+            LIMIT :limit
+        """
+        
+        rows = conn.run(query_sql, **params)
+        conn.close()
+        
+        # Convert rows to dictionaries
+        columns = ['activity_id', 'activity_name', 'activity_type', 'description', 'destination_name',
+                   'min_age', 'max_age', 'indoor', 'weather_dependent', 'duration_minutes', 'similarity_score']
+        results = [dict(zip(columns, row)) for row in rows]
         
         return jsonify({
             "query": query_text,

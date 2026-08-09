@@ -15,29 +15,52 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
-// Seed database with sample destinations
-async function seedDatabase() {
-    const btn = document.getElementById('seedBtn');
-    btn.disabled = true;
-    btn.textContent = '⏳ Seeding...';
-    
+// Fetch weather forecast for a destination
+async function fetchWeather(destinationId, destinationName) {
     try {
-        const response = await fetch(`${API_BASE_URL}/admin/seed`);
+        const response = await fetch(`${API_BASE_URL}/destinations/${destinationId}/weather?days=5`);
         const data = await response.json();
         
-        if (data.status === 'success') {
-            alert(`✅ Database seeded! Added ${data.added} destinations.`);
-            loadDestinations(); // Reload destinations (will hide button)
+        if (response.ok) {
+            displayWeatherModal(destinationName, data);
         } else {
-            alert(`❌ Error: ${data.error || 'Unknown error'}`);
-            btn.disabled = false;
-            btn.textContent = '🌱 Seed Database';
+            alert(`❌ Error fetching weather: ${data.error || 'Unknown error'}`);
         }
     } catch (error) {
-        alert(`❌ Error seeding database: ${error.message}`);
-        btn.disabled = false;
-        btn.textContent = '🌱 Seed Database';
+        alert(`❌ Error: ${error.message}`);
     }
+}
+
+// Display weather in a modal
+function displayWeatherModal(destinationName, weatherData) {
+    const dest = weatherData.destination;
+    const forecasts = weatherData.forecasts.slice(0, 5);
+    
+    let forecastHTML = forecasts.map(f => `
+        <div style="padding:12px;margin:8px 0;background:#f8f9fa;border-radius:6px;">
+            <div style="font-weight:600;margin-bottom:4px;">${f.date}</div>
+            <div>🌡️ ${f.temp_max_f}°F / ${f.temp_min_f}°F</div>
+            <div>☁️ ${f.weather_condition}</div>
+            <div>💧 Rain: ${f.precipitation_prob}% | 🌞 UV: ${f.uv_index} | 💨 ${f.wind_speed_mph} mph</div>
+        </div>
+    `).join('');
+    
+    const modal = document.createElement('div');
+    modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:1000;';
+    modal.innerHTML = `
+        <div style="background:white;padding:24px;border-radius:12px;max-width:500px;max-height:80vh;overflow-y:auto;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+                <h2 style="margin:0;">🌦️ ${dest.name}, ${dest.country}</h2>
+                <button onclick="this.parentElement.parentElement.parentElement.remove()" style="border:none;background:none;font-size:24px;cursor:pointer;">&times;</button>
+            </div>
+            <p style="color:#666;margin-bottom:16px;">5-Day Forecast (Open-Meteo API)</p>
+            ${forecastHTML}
+        </div>
+    `;
+    document.body.appendChild(modal);
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.remove();
+    });
 }
 
 // Search activities with semantic search
@@ -85,7 +108,7 @@ async function searchActivities() {
         
     } catch (error) {
         console.error('Search error:', error);
-        showError('Failed to search activities. Make sure the Flask API is running on localhost:8000.');
+        showError('Failed to search activities. Please try again or contact support if the issue persists.');
     }
 }
 
@@ -185,7 +208,7 @@ async function loadDestinations() {
         console.error('Load destinations error:', error);
         document.getElementById('destinations').innerHTML = `
             <div style="padding: 20px; text-align: center; color: #666;">
-                Unable to load destinations. Make sure the Flask API is running.
+                Unable to load destinations. Please refresh the page or contact support if the issue persists.
             </div>
         `;
     }
@@ -204,11 +227,21 @@ function displayDestinations(destinations) {
     
     destinations.forEach(dest => {
         html += `
-            <div class="destination-card" onclick="searchDestinationActivities('${escapeHtml(dest.name)}')">
+            <div class="destination-card">
                 <div class="destination-name">${escapeHtml(dest.name)}</div>
                 <div class="destination-country">🌍 ${escapeHtml(dest.country)}</div>
                 <div class="destination-description">
                     ${truncateText(escapeHtml(dest.description), 120)}
+                </div>
+                <div style="margin-top:12px;display:flex;gap:8px;">
+                    <button onclick="fetchWeather(${dest.destination_id}, '${escapeHtml(dest.name)}'); event.stopPropagation();" 
+                            style="flex:1;padding:8px;background:#007bff;color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px;">
+                        🌦️ Weather
+                    </button>
+                    <button onclick="searchDestinationActivities('${escapeHtml(dest.name)}'); event.stopPropagation();" 
+                            style="flex:1;padding:8px;background:#28a745;color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px;">
+                        🎯 Activities
+                    </button>
                 </div>
             </div>
         `;
