@@ -47,42 +47,37 @@ LAKEBASE_DATABASE = "databricks_postgres"
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 CORS(app)  # Enable CORS for frontend access
 
-# Global connection pool (will be lazy-initialized)
-_connection_pool = None
-
-
-def get_connection_pool():
-    """
-    Get or create a connection pool to Lakebase.
-    """
-    global _connection_pool
-    
-    if _connection_pool is None:
-        w = WorkspaceClient()
-        
-        # Get endpoint details
-        endpoint_name = f"projects/{LAKEBASE_PROJECT}/branches/{LAKEBASE_BRANCH}/endpoints/primary"
-        endpoint = w.postgres.get_endpoint(name=endpoint_name)
-        host = endpoint.status.hosts.host
-        
-        # Generate OAuth token
-        cred = w.postgres.generate_database_credential(endpoint=endpoint_name)
-        token = cred.token
-        
-        # Create connection string
-        conninfo = f"host={host} port=5432 dbname={LAKEBASE_DATABASE} user=databricks password={token} sslmode=require"
-        
-        _connection_pool = psycopg.ConnectionPool(conninfo, min_size=2, max_size=10)
-    
-    return _connection_pool
+# Cache connection details (tokens expire, so we'll refresh as needed)
+_connection_cache = {}
 
 
 def get_db_connection():
     """
-    Get a connection from the pool.
+    Get a fresh database connection to Lakebase.
+    Uses cached credentials that auto-refresh on expiry.
     """
-    pool = get_connection_pool()
-    return pool.connection()
+    w = WorkspaceClient()
+    
+    # Get endpoint details
+    endpoint_name = f"projects/{LAKEBASE_PROJECT}/branches/{LAKEBASE_BRANCH}/endpoints/primary"
+    endpoint = w.postgres.get_endpoint(name=endpoint_name)
+    host = endpoint.status.hosts.host
+    
+    # Generate OAuth token (cached by SDK)
+    cred = w.postgres.generate_database_credential(endpoint=endpoint_name)
+    token = cred.token
+    
+    # Create connection
+    conn = psycopg.connect(
+        host=host,
+        port=5432,
+        dbname=LAKEBASE_DATABASE,
+        user="databricks",
+        password=token,
+        sslmode="require"
+    )
+    
+    return conn
 
 
 def generate_placeholder_query_embedding() -> List[float]:
