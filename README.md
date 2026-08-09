@@ -48,16 +48,25 @@ Open-Meteo API → Weather forecasts → Lakebase Postgres
 - `packing_items` — Packing lists with weather reasons
 
 ### Flask REST API
+
+**Endpoints:**
 ```
-POST /activities/search
-{
-  "query": "toddler-friendly indoor activities near water",
-  "age_min": 2,
-  "age_max": 4,
-  "weather_conditions": {"rain": true}
-}
+GET  /                          - Health check
+GET  /destinations              - List all destinations
+GET  /destinations/:id          - Get destination details
+GET  /destinations/:id/activities - Get activities for a destination
+GET  /activities/search         - Semantic search over activities
 ```
-Returns semantically ranked activities.
+
+**Example: Semantic Search**
+```bash
+curl "http://localhost:8000/activities/search?query=indoor+museum&min_age=2&limit=5"
+```
+
+Returns activities ranked by vector similarity with optional filters:
+- `min_age` / `max_age` — Age range
+- `indoor` — Indoor only (true/false)
+- `limit` — Number of results (default: 10, max: 50)
 
 ### AI Agent Tools
 - `get_current_weather(destination)` — Query Open-Meteo API
@@ -122,10 +131,12 @@ apps deploy family-adventure-planner
 
 - [x] Lakebase schema with pgvector
 - [x] GitHub repository setup
-- [ ] Spark pipeline: Wikimedia ingestion
+- [x] Sample data loaded (3 destinations, 5 activities with embeddings)
+- [x] Flask REST API with semantic search
+- [x] Vector search working (pgvector HNSW indexes)
+- [ ] Spark pipeline: Wikimedia ingestion (code ready, pending ML dependencies)
 - [ ] Spark pipeline: Weather API integration
-- [ ] Flask app scaffold
-- [ ] Semantic search endpoint
+- [ ] Real embeddings (replace placeholders with sentence-transformers)
 - [ ] AI agent tools
 - [ ] CDF → Delta analytics
 - [ ] Frontend UI
