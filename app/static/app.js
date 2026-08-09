@@ -1,6 +1,7 @@
 // Family Adventure Planner - Frontend JavaScript
 
-const API_BASE_URL = 'http://localhost:8000';
+// Use relative URLs so it works in both local dev and production
+const API_BASE_URL = '';
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
