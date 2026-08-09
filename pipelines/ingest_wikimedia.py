@@ -113,8 +113,12 @@ def fetch_wikimedia_article(title: str) -> Optional[Dict]:
         "redirects": 1
     }
     
+    headers = {
+        "User-Agent": "FamilyAdventurePlanner/1.0 (https://github.com/amalphonse/family-adventure-planner; educational project)"
+    }
+    
     try:
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(url, params=params, headers=headers, timeout=10)
         response.raise_for_status()
         data = response.json()
         
@@ -151,8 +155,12 @@ def search_wikimedia_attractions(location: str, max_results: int = 5) -> List[Di
         "srlimit": max_results
     }
     
+    headers = {
+        "User-Agent": "FamilyAdventurePlanner/1.0 (https://github.com/amalphonse/family-adventure-planner; educational project)"
+    }
+    
     try:
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(url, params=params, headers=headers, timeout=10)
         response.raise_for_status()
         data = response.json()
         
