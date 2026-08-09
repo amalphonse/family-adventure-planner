@@ -54,22 +54,62 @@ _connection_cache = {}
 def get_db_connection():
     """
     Get a fresh database connection to Lakebase using pg8000 (pure Python).
-    
-    Note: This function requires proper Databricks authentication context.
-    It works in notebooks but may fail in deployed Databricks Apps due to
-    different authentication scopes. For production apps, consider using
-    service principal authentication or running data ingestion separately.
+    Uses Databricks REST API to get endpoint details and generate credentials.
     """
-    w = WorkspaceClient()
+    import os
+    import requests
     
-    # Get endpoint details
-    endpoint_name = f"projects/{LAKEBASE_PROJECT}/branches/{LAKEBASE_BRANCH}/endpoints/primary"
-    endpoint = w.postgres.get_endpoint(name=endpoint_name)
-    host = endpoint.status.hosts.host
+    # Get Databricks workspace URL and token from environment
+    # In Databricks Apps, these are automatically available
+    workspace_url = os.environ.get('DATABRICKS_HOST', '')
+    if not workspace_url:
+        # Try to get from SDK config
+        w = WorkspaceClient()
+        workspace_url = w.config.host
     
-    # Generate OAuth token (cached by SDK)
-    cred = w.postgres.generate_database_credential(endpoint=endpoint_name)
-    token = cred.token
+    # Get auth token
+    token_source = None
+    if hasattr(WorkspaceClient().config, 'token'):
+        token_source = WorkspaceClient().config.token
+    
+    if not token_source:
+        raise Exception("Cannot get Databricks authentication token")
+    
+    # Use REST API to get Lakebase endpoint details
+    endpoint_path = f"projects/{LAKEBASE_PROJECT}/branches/{LAKEBASE_BRANCH}/endpoints/primary"
+    
+    # Get endpoint info
+    resp = requests.get(
+        f"{workspace_url}/api/2.0/lakebase/postgres/endpoints/{endpoint_path}",
+        headers={"Authorization": f"Bearer {token_source}"},
+        timeout=10
+    )
+    
+    if resp.status_code != 200:
+        raise Exception(f"Cannot get Lakebase endpoint: {resp.status_code} - {resp.text}")
+    
+    endpoint_data = resp.json()
+    host = endpoint_data.get('status', {}).get('hosts', {}).get('host')
+    
+    if not host:
+        raise Exception("Lakebase endpoint host not found in response")
+    
+    # Generate database credential
+    cred_resp = requests.post(
+        f"{workspace_url}/api/2.0/lakebase/postgres/credentials/generate",
+        headers={"Authorization": f"Bearer {token_source}"},
+        json={"endpoint": endpoint_path},
+        timeout=10
+    )
+    
+    if cred_resp.status_code != 200:
+        raise Exception(f"Cannot generate Lakebase credential: {cred_resp.status_code} - {cred_resp.text}")
+    
+    cred_data = cred_resp.json()
+    db_token = cred_data.get('token')
+    
+    if not db_token:
+        raise Exception("Database token not found in credential response")
     
     # Create connection using pg8000 (pure Python, no binary deps)
     conn = pg8000.native.Connection(
@@ -77,7 +117,7 @@ def get_db_connection():
         port=5432,
         database=LAKEBASE_DATABASE,
         user="databricks",
-        password=token,
+        password=db_token,
         ssl_context=True
     )
     
@@ -140,19 +180,20 @@ def list_destinations():
         ]
     """
     try:
-        conn = get_db_connection()
-        destinations = query_as_dicts(conn, """
-            SELECT 
-                destination_id,
-                name,
-                latitude,
-                longitude,
-                country,
-                description
-            FROM destinations
-            ORDER BY name
-        """)
-        conn.close()
+        with get_db_connection() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute("""
+                    SELECT 
+                        destination_id,
+                        name,
+                        latitude,
+                        longitude,
+                        country,
+                        description
+                    FROM destinations
+                    ORDER BY name
+                """)
+                destinations = cur.fetchall()
         
         return jsonify(destinations)
     
