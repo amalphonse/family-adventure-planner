@@ -22,12 +22,14 @@ resources:
           value: production
         - name: PORT
           value: "8000"
-        - name: LAKEBASE_PROJECT
-          value: family-adventure-planner
-        - name: LAKEBASE_BRANCH
-          value: production
+        - name: LAKEBASE_HOST
+          value: ep-calm-river-d891evds.database.us-east-2.cloud.databricks.com
         - name: LAKEBASE_DATABASE
           value: databricks_postgres
+        - name: LAKEBASE_USER
+          value: user
+        - name: LAKEBASE_PASSWORD
+          value: npg_ZlOMFTehK8J3
       
       # Python dependencies
       dependencies:
