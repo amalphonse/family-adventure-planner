@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Family Adventure Planner</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <h1>🏞️ Family Adventure Planner</h1>
+            <p class="tagline">Find the perfect activities for your family trip</p>
+        </header>
+
+        <!-- Search Section -->
+        <section class="search-section">
+            <div class="search-box">
+                <input 
+                    type="text" 
+                    id="searchInput" 
+                    placeholder="Search for activities... (e.g., 'indoor museum for toddlers')"
+                    value="indoor museum"
+                >
+                <button id="searchBtn" onclick="searchActivities()">Search</button>
+            </div>
+
+            <!-- Filters -->
+            <div class="filters">
+                <div class="filter-group">
+                    <label for="minAge">Min Age:</label>
+                    <input type="number" id="minAge" min="0" max="18" value="2" placeholder="Any">
+                </div>
+                
+                <div class="filter-group">
+                    <label for="maxAge">Max Age:</label>
+                    <input type="number" id="maxAge" min="0" max="18" placeholder="Any">
+                </div>
+                
+                <div class="filter-group">
+                    <label for="indoorFilter">Location:</label>
+                    <select id="indoorFilter">
+                        <option value="">Any</option>
+                        <option value="true">Indoor Only</option>
+                        <option value="false">Outdoor Only</option>
+                    </select>
+                </div>
+                
+                <button class="clear-btn" onclick="clearFilters()">Clear Filters</button>
+            </div>
+        </section>
+
+        <!-- Quick Stats -->
+        <section id="stats" class="stats" style="display: none;">
+            <div class="stat-card">
+                <span class="stat-label">Results Found</span>
+                <span class="stat-value" id="resultCount">0</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-label">Destinations</span>
+                <span class="stat-value" id="destinationCount">3</span>
+            </div>
+        </section>
+
+        <!-- Loading Spinner -->
+        <div id="loading" class="loading" style="display: none;">
+            <div class="spinner"></div>
+            <p>Searching activities...</p>
+        </div>
+
+        <!-- Results Section -->
+        <section id="results" class="results">
+            <div class="welcome">
+                <h2>👋 Welcome!</h2>
+                <p>Search for family-friendly activities in San Francisco.</p>
+                <p>Try searching: <strong>"playground"</strong>, <strong>"aquarium"</strong>, or <strong>"outdoor park"</strong></p>
+            </div>
+        </section>
+
+        <!-- Browse Destinations -->
+        <section class="destinations-section">
+            <h2>Browse Destinations</h2>
+            <div id="destinations" class="destinations-grid">
+                <!-- Loaded dynamically -->
+            </div>
+        </section>
+    </div>
+
+    <footer>
+        <p>Powered by Lakebase Postgres + pgvector | <a href="https://github.com/amalphonse/family-adventure-planner" target="_blank">GitHub</a></p>
+    </footer>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

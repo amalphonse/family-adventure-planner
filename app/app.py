@@ -24,7 +24,7 @@ Usage:
     gunicorn -w 4 -b 0.0.0.0:8000 app:app
 """
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import psycopg
 from psycopg.rows import dict_row
@@ -44,7 +44,7 @@ LAKEBASE_DATABASE = "databricks_postgres"
 # Flask App Setup
 # ============================================================================
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static', static_url_path='/static')
 CORS(app)  # Enable CORS for frontend access
 
 # Global connection pool (will be lazy-initialized)
@@ -103,6 +103,14 @@ def generate_placeholder_query_embedding() -> List[float]:
 # ============================================================================
 
 @app.route('/', methods=['GET'])
+def index():
+    """
+    Serve the frontend UI.
+    """
+    return send_from_directory('static', 'index.html')
+
+
+@app.route('/health', methods=['GET'])
 def health_check():
     """
     Health check endpoint.
