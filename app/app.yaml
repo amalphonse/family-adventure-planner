@@ -1,50 +1,22 @@
 # Databricks App Configuration for Family Adventure Planner
 # Deploy with: databricks apps deploy family-adventure-planner
 
-name: family-adventure-planner
-description: AI-powered trip planning assistant with semantic search over family-friendly activities
+command:
+  - python
+  - app.py
 
-# App runtime configuration
-resources:
-  - name: family-adventure-planner-app
-    description: Flask API + Frontend for Family Adventure Planner
-    
-    # App serving configuration
-    app:
-      # Command to start the Flask server
-      command:
-        - python
-        - app.py
-      
-      # Environment variables
-      env:
-        - name: FLASK_ENV
-          value: production
-        - name: PORT
-          value: "8000"
-        - name: LAKEBASE_HOST
-          value: ep-calm-river-d891evds.database.us-east-2.cloud.databricks.com
-        - name: LAKEBASE_DATABASE
-          value: databricks_postgres
-        - name: LAKEBASE_USER
-          value: user
-        - name: LAKEBASE_PASSWORD
-          value: npg_ZlOMFTehK8J3
-      
-      # Python dependencies
-      dependencies:
-        - flask
-        - flask-cors
-        - pg8000
-        - requests
-        - databricks-sdk
-        - sentence-transformers
-      
-      # Files to include in the app
-      # All files in the app/ directory will be included
-      source_code_path: .
-
-# Permissions (optional - defaults to creator only)
-permissions:
-  - level: CAN_USE
-    group_name: users
+env:
+  - name: FLASK_ENV
+    value: production
+  - name: PORT
+    value: "8000"
+  - name: DATABASE_HOST
+    value: ep-calm-river-d891evds.database.us-east-2.cloud.databricks.com
+  - name: DATABASE_PORT
+    value: "5432"
+  - name: DATABASE_NAME
+    value: databricks_postgres
+  - name: DATABASE_USER
+    value: user
+  - name: DATABASE_PASSWORD
+    value: npg_ZlOMFTehK8J3
