@@ -453,30 +453,30 @@ def search_activities():
         query_embedding = generate_query_embedding(query_text)
         embedding_str = str(query_embedding)
         
-        # Build dynamic WHERE clause for filters (using pg8000 named parameters)
+        # Build dynamic WHERE clause for filters (using psycopg2 named parameters)
         where_clauses = []
         params = {'embedding1': embedding_str, 'embedding2': embedding_str, 'limit': limit}
         
         if min_age is not None:
-            where_clauses.append("a.min_age <= :min_age")
+            where_clauses.append("a.min_age <= %(min_age)s")
             params['min_age'] = min_age
         
         if max_age is not None:
-            where_clauses.append("(a.max_age IS NULL OR a.max_age >= :max_age)")
+            where_clauses.append("(a.max_age IS NULL OR a.max_age >= %(max_age)s)")
             params['max_age'] = max_age
         
         if indoor_filter is not None:
             indoor_bool = indoor_filter.lower() == 'true'
-            where_clauses.append("a.indoor = :indoor")
+            where_clauses.append("a.indoor = %(indoor)s")
             params['indoor'] = indoor_bool
         
         if destination_id is not None:
-            where_clauses.append("a.destination_id = :dest_id")
+            where_clauses.append("a.destination_id = %(dest_id)s")
             params['dest_id'] = destination_id
         
         where_clause = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
         
-        # Execute semantic search using pg8000
+        # Execute semantic search using psycopg2
         conn = get_db_connection()
         query_sql = f"""
             SELECT 
@@ -490,24 +490,23 @@ def search_activities():
                 a.indoor,
                 a.weather_dependent,
                 a.duration_minutes,
-                1 - (a.content_embedding <=> :embedding1::vector) as similarity_score
+                1 - (a.content_embedding <=> %(embedding1)s::vector) as similarity_score
             FROM activities a
             JOIN destinations d ON a.destination_id = d.destination_id
             {where_clause}
-            ORDER BY a.content_embedding <=> :embedding2::vector
-            LIMIT :limit
+            ORDER BY a.content_embedding <=> %(embedding2)s::vector
+            LIMIT %(limit)s
         """
         
-        result = conn.run(query_sql, **params)
-        conn.close()
+        with conn.cursor() as cur:
+            cur.execute(query_sql, params)
+            rows = cur.fetchall()
+            
+            # Get column names from cursor description
+            columns = [desc[0] for desc in cur.description]
+            results = [dict(zip(columns, row)) for row in rows]
         
-        # Handle pg8000.native format
-        if not result or len(result) == 0:
-            results = []
-        else:
-            columns = result[0]  # First row is column names
-            data_rows = result[1:] if len(result) > 1 else []  # Rest are data rows
-            results = [dict(zip(columns, row)) for row in data_rows]
+        conn.close()
         
         return jsonify({
             "query": query_text,

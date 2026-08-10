@@ -190,12 +190,14 @@ async function loadDestinations() {
         // Update destination count
         document.getElementById('destinationCount').textContent = destinations.length;
         
-        // Hide seed button if destinations exist
+        // Hide seed button if destinations exist (if button exists)
         const seedBtn = document.getElementById('seedBtn');
-        if (destinations.length > 0) {
-            seedBtn.style.display = 'none';
-        } else {
-            seedBtn.style.display = 'inline-block';
+        if (seedBtn) {
+            if (destinations.length > 0) {
+                seedBtn.style.display = 'none';
+            } else {
+                seedBtn.style.display = 'inline-block';
+            }
         }
         
         // Populate destination filter dropdown
