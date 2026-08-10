@@ -72,13 +72,13 @@ def get_db_connection():
     password = "npg_ZlOMFTehK8J3"
     
     # Create connection
-    conn = pg8000.native.Connection(
+    conn = psycopg2.connect(
         host=host,
         port=port,
-        database=database,
+        dbname=database,
         user=user,
         password=password,
-        ssl_context=True
+        sslmode="require"
     )
     
     return conn
