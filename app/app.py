@@ -34,6 +34,7 @@ import os
 from sentence_transformers import SentenceTransformer
 import requests
 from datetime import datetime, timedelta
+import traceback
 
 # ============================================================================
 # Configuration
