@@ -27,7 +27,7 @@ Usage:
 
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-import pg8000.native
+import psycopg2
 from databricks.sdk import WorkspaceClient
 from typing import Optional, List, Dict
 import os
@@ -86,14 +86,20 @@ def get_db_connection():
 
 def run_query(conn, query, params=None):
     """
-    Execute a query with pg8000 and return results as list of dicts.
-    pg8000.native.run() returns (columns, rows) tuple.
+    Execute a query with psycopg2 and return results as list of dicts.
     """
-    result = conn.run(query, **params) if params else conn.run(query)
-    if not result or len(result) < 2:
-        return []
-    columns, rows = result[0], result[1:]
-    return [dict(zip(columns, row)) for row in rows]
+    with conn.cursor() as cur:
+        if params:
+            cur.execute(query, params)
+        else:
+            cur.execute(query)
+        
+        if cur.description is None:
+            return []
+        
+        columns = [desc[0] for desc in cur.description]
+        rows = cur.fetchall()
+        return [dict(zip(columns, row)) for row in rows]
 
 
 def generate_query_embedding(query_text: str) -> List[float]:
@@ -213,8 +219,7 @@ def list_destinations():
     """
     try:
         conn = get_db_connection()
-        # pg8000.native returns [columns, row1, row2, ...]
-        result = conn.run("""
+        destinations = run_query(conn, """
             SELECT 
                 destination_id,
                 name,
@@ -226,14 +231,6 @@ def list_destinations():
             ORDER BY name
         """)
         conn.close()
-        
-        # Parse pg8000.native format: first item is column names, rest are data rows
-        if not result or len(result) == 0:
-            return jsonify([])
-        
-        columns = result[0]  # First row is column names
-        data_rows = result[1:] if len(result) > 1 else []  # Rest are data rows
-        destinations = [dict(zip(columns, row)) for row in data_rows]
         
         return jsonify(destinations)
     
