@@ -63,14 +63,14 @@ print("Embedding model loaded!")
 def get_db_connection():
     """
     Get a database connection to Lakebase.
-    Hardcoded credentials for simplicity.
+    Uses environment variables from app.yaml or falls back to defaults.
     """
-    # Hardcoded connection details
-    host = "ep-calm-river-d891evds.database.us-east-2.cloud.databricks.com"
-    port = 5432
-    database = "databricks_postgres"
-    user = "user"
-    password = "npg_ZlOMFTehK8J3"
+    # Use environment variables (from app.yaml) or fallback to defaults
+    host = os.getenv("DATABASE_HOST", "ep-calm-river-d891evds.database.us-east-2.cloud.databricks.com")
+    port = int(os.getenv("DATABASE_PORT", "5432"))
+    database = os.getenv("DATABASE_NAME", "databricks_postgres")
+    user = os.getenv("DATABASE_USER", "user")
+    password = os.getenv("DATABASE_PASSWORD", "npg_ZlOMFTehK8J3")
     
     # Create connection
     conn = psycopg2.connect(
@@ -247,31 +247,34 @@ def get_destination(destination_id: int):
     """
     try:
         conn = get_db_connection()
-        result = conn.run("""
-            SELECT 
-                destination_id,
-                name,
-                latitude,
-                longitude,
-                country,
-                description,
-                created_at
-            FROM destinations
-            WHERE destination_id = :id
-        """, id=destination_id)
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 
+                    destination_id,
+                    name,
+                    latitude,
+                    longitude,
+                    country,
+                    description,
+                    created_at
+                FROM destinations
+                WHERE destination_id = %s
+            """, (destination_id,))
+            
+            row = cur.fetchone()
+            if not row:
+                conn.close()
+                return jsonify({"error": "Destination not found"}), 404
+            
+            columns = [desc[0] for desc in cur.description]
+            destination = dict(zip(columns, row))
+        
         conn.close()
-        
-        # Parse pg8000.native format
-        if not result or len(result) <= 1:
-            return jsonify({"error": "Destination not found"}), 404
-        
-        columns = result[0]  # First row is column names
-        data_row = result[1]  # Second row is the data
-        destination = dict(zip(columns, data_row))
         return jsonify(destination)
     
     except Exception as e:
         print(f"ERROR in get_destination: {e}")
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
@@ -309,24 +312,27 @@ def get_destination_weather(destination_id: int):
     try:
         # Get destination details first
         conn = get_db_connection()
-        result = conn.run("""
-            SELECT 
-                destination_id,
-                name,
-                latitude,
-                longitude,
-                country
-            FROM destinations
-            WHERE destination_id = :id
-        """, id=destination_id)
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 
+                    destination_id,
+                    name,
+                    latitude,
+                    longitude,
+                    country
+                FROM destinations
+                WHERE destination_id = %s
+            """, (destination_id,))
+            
+            row = cur.fetchone()
+            if not row:
+                conn.close()
+                return jsonify({"error": "Destination not found"}), 404
+            
+            columns = [desc[0] for desc in cur.description]
+            destination = dict(zip(columns, row))
+        
         conn.close()
-        
-        if not result or len(result) <= 1:
-            return jsonify({"error": "Destination not found"}), 404
-        
-        columns = result[0]
-        data_row = result[1]
-        destination = dict(zip(columns, data_row))
         
         # Fetch weather forecast
         weather_data = fetch_weather_forecast(
@@ -375,31 +381,32 @@ def get_destination_activities(destination_id: int):
     """
     try:
         conn = get_db_connection()
-        result = conn.run("""
-            SELECT 
-                activity_id,
-                activity_name,
-                activity_type,
-                description,
-                min_age,
-                max_age,
-                indoor,
-                weather_dependent,
-                duration_minutes
-            FROM activities
-            WHERE destination_id = :id
-            ORDER BY activity_name
-        """, id=destination_id)
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 
+                    activity_id,
+                    activity_name,
+                    activity_type,
+                    description,
+                    min_age,
+                    max_age,
+                    indoor,
+                    weather_dependent,
+                    duration_minutes
+                FROM activities
+                WHERE destination_id = %s
+                ORDER BY activity_name
+            """, (destination_id,))
+            
+            rows = cur.fetchall()
+            if not rows:
+                conn.close()
+                return jsonify([])
+            
+            columns = [desc[0] for desc in cur.description]
+            activities = [dict(zip(columns, row)) for row in rows]
+        
         conn.close()
-        
-        # Handle pg8000.native format
-        if not result or len(result) == 0:
-            return jsonify([])
-        
-        columns = result[0]  # First row is column names
-        data_rows = result[1:] if len(result) > 1 else []  # Rest are data rows
-        activities = [dict(zip(columns, row)) for row in data_rows]
-        
         return jsonify(activities)
     
     except Exception as e:
@@ -453,58 +460,62 @@ def search_activities():
         query_embedding = generate_query_embedding(query_text)
         embedding_str = str(query_embedding)
         
-        # Build dynamic WHERE clause for filters (using psycopg2 named parameters)
+        # Build dynamic WHERE clause for filters (using psycopg2 positional parameters)
         where_clauses = []
-        params = {'embedding1': embedding_str, 'embedding2': embedding_str, 'limit': limit}
+        params = []
         
         if min_age is not None:
-            where_clauses.append("a.min_age <= %(min_age)s")
-            params['min_age'] = min_age
+            where_clauses.append("a.min_age <= %s")
+            params.append(min_age)
         
         if max_age is not None:
-            where_clauses.append("(a.max_age IS NULL OR a.max_age >= %(max_age)s)")
-            params['max_age'] = max_age
+            where_clauses.append("(a.max_age IS NULL OR a.max_age >= %s)")
+            params.append(max_age)
         
         if indoor_filter is not None:
             indoor_bool = indoor_filter.lower() == 'true'
-            where_clauses.append("a.indoor = %(indoor)s")
-            params['indoor'] = indoor_bool
+            where_clauses.append("a.indoor = %s")
+            params.append(indoor_bool)
         
         if destination_id is not None:
-            where_clauses.append("a.destination_id = %(dest_id)s")
-            params['dest_id'] = destination_id
+            where_clauses.append("a.destination_id = %s")
+            params.append(destination_id)
         
         where_clause = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
         
         # Execute semantic search using psycopg2
         conn = get_db_connection()
-        query_sql = f"""
-            SELECT 
-                a.activity_id,
-                a.activity_name,
-                a.activity_type,
-                a.description,
-                d.name as destination_name,
-                a.min_age,
-                a.max_age,
-                a.indoor,
-                a.weather_dependent,
-                a.duration_minutes,
-                1 - (a.content_embedding <=> %(embedding1)s::vector) as similarity_score
-            FROM activities a
-            JOIN destinations d ON a.destination_id = d.destination_id
-            {where_clause}
-            ORDER BY a.content_embedding <=> %(embedding2)s::vector
-            LIMIT %(limit)s
-        """
-        
         with conn.cursor() as cur:
-            cur.execute(query_sql, params)
-            rows = cur.fetchall()
+            query_sql = f"""
+                SELECT 
+                    a.activity_id,
+                    a.activity_name,
+                    a.activity_type,
+                    a.description,
+                    d.name as destination_name,
+                    a.min_age,
+                    a.max_age,
+                    a.indoor,
+                    a.weather_dependent,
+                    a.duration_minutes,
+                    1 - (a.content_embedding <=> %s::vector) as similarity_score
+                FROM activities a
+                JOIN destinations d ON a.destination_id = d.destination_id
+                {where_clause}
+                ORDER BY a.content_embedding <=> %s::vector
+                LIMIT %s
+            """
             
-            # Get column names from cursor description
-            columns = [desc[0] for desc in cur.description]
-            results = [dict(zip(columns, row)) for row in rows]
+            # Add embedding and limit to params (embedding used twice + limit at end)
+            query_params = tuple(params + [embedding_str, embedding_str, limit])
+            cur.execute(query_sql, query_params)
+            
+            rows = cur.fetchall()
+            if not rows:
+                results = []
+            else:
+                columns = [desc[0] for desc in cur.description]
+                results = [dict(zip(columns, row)) for row in rows]
         
         conn.close()
         
